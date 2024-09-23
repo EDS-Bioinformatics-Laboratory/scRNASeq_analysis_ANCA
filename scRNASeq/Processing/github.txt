@@ -1,0 +1,46 @@
+#
+# Git bash commands to pull and push the software from a GitHub EDS repo.
+#
+
+# While developing, software should be pulled and pushed at least once per day (possibly using
+# different branches)
+
+##
+## EXAMPLE
+##
+## Adjust for your own situation
+##
+
+Initializing a new repository and first-time sync of File System Structure to GitHub
+--------------------------------------------------------------------------------------
+1) Create new repository on GitHub EDS: Martinez_2012  (8 November 2020)
+2) Start Git Bash
+3) Goto project directory C:\_data\Work\AMC\Projects\2020\Immunology\Projects\06112020_PC-differentiation-MartinezModel
+4) Goto processing directory: cd Processing
+
+5) git clone https://github.com/EDS-Bioinformatics-Laboratory/Martinez_2012
+This will make a Martinez_2012 subfolder in Processing
+
+6) Copy everything from Martinez_2012 to ../Processing  (including the .git directory!!!)
+7) Remove the Martinez_2012 directory
+
+Next add everything to the staging area, commit, and push
+8) 
+git status
+git add .
+git status
+git commit -m "short description" -m "long description"
+git push  
+
+This finishes the first synchronisation of the new File system structure
+
+From now on the following commands can be used in GitBash
+cd "C:\_data\Work\AMC\Projects\2020\Immunology\Projects\06112020_PC-differentiation-MartinezModel\Processing"
+git pull https://github.com/EDS-Bioinformatics-Laboratory/Martinez_2012
+git add .
+git commit -m "short description" -m "long description"
+git push 
+
+See also https://github.com/EDS-Bioinformatics-Laboratory/Reproducibility/blob/master/GitHub_Branch.md
+
+

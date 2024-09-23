@@ -1,0 +1,169 @@
+---
+title: "Chemokines and their receptors"
+author: "original script: Perry Moerland\trefinement: Aldo Jongejan"
+date: "November, 2023"
+urlcolor: blue
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 5
+    code_folding: show
+---
+
+
+```{r setup, include=FALSE,purl=FALSE}
+knitr::opts_chunk$set(echo=TRUE,comment="#",message=FALSE,warning=FALSE,
+                      fig.align='center',out.width="95%%",
+                      fig.path = "21_chemokines_red_blue_AJ_20231130/",fig.show="hold")
+```
+
+```{r init}
+# Set default for a good start 
+source("initAnalysis.r")
+#init()
+
+outDir <- "21_chemokines_red_blue_AJ_20231130"
+dir.create(outDir)
+
+# Load packages
+library(ggplot2)
+library(multcomp)
+library(RColorBrewer)
+library(readxl)
+library(Seurat)
+library(GSEABase)
+library(plyr)
+library(dplyr)
+```
+  
+This code is to be run on R < 4.3 and Seurat version < 4.4, so check:
+  
+```{r versions}
+print(paste0("R version: ", R.version.string))
+print(paste0("Seurat   : v", packageVersion("Seurat")))
+```
+
+First import the single-cell data:
+```{r seurat}
+# Read the 10X data
+seurat <- readRDS("10_Reclustering_MP_and_MC/selectedClusters.subjectIntegrated.reclustered.rds")
+seurat
+DefaultAssay(seurat) <- "SCT"
+Idents(seurat) <- "integrated_snn_res.1"
+```
+## With scale = TRUE
+
+ Let's just retrieve two genesets also included in `15_pathway_visualization_20230419\enrichplot\pheatmap_AllComparisons_FDR.pdf`:
+ 
+- [REACTOME_CHEMOKINE_RECEPTORS_BIND_CHEMOKINES](https://www.gsea-msigdb.org/gsea/msigdb/cards/REACTOME_CHEMOKINE_RECEPTORS_BIND_CHEMOKINES)
+- [KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION](https://www.gsea-msigdb.org/gsea/msigdb/human/geneset/KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION.html)
+
+and then visualize these. Note that these two genesets are large, especially
+the one from KEGG.
+
+```{r msigdb-sets}
+## Import the MSigDB database v2023.1.Hs genesets
+c2BroadSets = getGmt(con="../../../../../MSigDB/v2023.1.Hs/c2.all.v2023.1.Hs.symbols.gmt",geneIdType=SymbolIdentifier(), collectionType=BroadCollection(category="c2"))
+BroadSets = geneIds(c2BroadSets)
+
+# Select the two genesets
+BroadSets <- BroadSets[grepl("REACTOME_CHEMOKINE_RECEPTORS_BIND_CHEMOKINES|KEGG_CYTOKINE_CYTOKINE_RECEPTOR_INTERACTION", names(BroadSets))]
+sapply(BroadSets, length)
+```
+  
+### First, only select the macrophage clusters
+
+```{r macrophage_selection}
+# Only include clusters 0, 1, 4 and 8
+seurat.selClust <- subset(seurat, subset = integrated_snn_res.1 %in% c(0,1,4,8)) 
+seurat.selClust@meta.data$integrated_snn_res.1 <- factor(seurat.selClust@meta.data$integrated_snn_res.1)
+seurat.selClust
+```
+  
+We are not using the REACTOME set here ...  
+  
+### KEGG
+
+
+```{r kegg_in_seurat}
+kegg <- BroadSets[[2]]
+# These genes are not present in the SCT assay
+setdiff(kegg, rownames(seurat.selClust))
+```
+
+Yosta is mentioning some genes in her paper.  
+
+```{r gene_presence_kegg}
+genesYosta <- c('CX3CR1', 'CCR1', 'CCR2','IL1B','TNF','CXCL2','CXCL3','CXCL8','IL18','IL12','IL15','CXCL16','CSF1R','CSF1','IFNGR2','VEGFA', 'VEGFB')
+genesYosta %in% kegg
+```
+
+So, to begin with not all of them are present ... IL12    
+
+#### FindAllMarkers - select based on avg_log2FC and take the top 15
+  
+Here, I select for an avg_log2FC > 0.2 and then take the top 15 per contrast
+
+```{r Fig2D_kegg, dev=c('png','pdf','tiff'), fig.width=18}
+kegg_sorted <- sort(intersect(kegg, rownames(seurat.selClust)))
+length(kegg_sorted)
+
+# In order to run FindAllMarkers, we need to run PrepSCTFindMarkers first
+seurat.selClust <- PrepSCTFindMarkers(seurat.selClust)
+
+# Lower the cut-offs in order to get most out of it
+df.findAllMarkers <- FindAllMarkers(seurat.selClust, features=kegg_sorted, only.pos=TRUE, min.pct = 0.0, logfc.threshold = 0.0)
+
+dim(df.findAllMarkers)  # There are 164 genes in the KEGG selection
+
+# We miss some genes now, because there still is a filter on number of cells or something similar
+
+library(dplyr)
+df.findAllMarkers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 0.2) %>%
+    slice_head(n = 15) %>%
+    ungroup() -> top15
+
+c('CX3CR1', 'CCR1', 'CCR2','IL1B','TNF','CXCL2','CXCL3','CXCL8','IL18','IL12','IL15','CXCL16','CSF1R','CSF1','IFNGR2','VEGFA', 'VEGFB') %in% top15$gene
+
+dim(top15)
+
+DotPlot(seurat.selClust, features = unique(top15$gene), cols="RdBu", dot.scale = 9) + RotatedAxis() +
+  theme(axis.text.x = element_text(size = 8)) 
+
+# And save the data
+write.table(df.findAllMarkers, paste(outDir,"kegg_findAllMarkers.txt", sep="/"), sep="\t", 
+            quote = FALSE, row.names = TRUE, col.names = NA)
+
+```
+  
+#### And extended figure 5
+
+```{r ExtendedFig5_kegg, dev=c('png','pdf','tiff'), fig.width=18}
+kegg <- BroadSets[[2]]
+kegg <- sort(intersect(kegg, rownames(seurat)))
+length(kegg)
+
+head(kegg)
+
+# Too large, so let's split it in half
+kegg1 <- kegg[1:82]
+kegg2 <- kegg[82:length(kegg)]
+
+# The levels of the clusters are in order ... 
+print(levels(seurat@meta.data$integrated_snn_res.1))
+
+DotPlot(seurat, features = kegg1, cols="RdBu", dot.scale = 9) + RotatedAxis() +
+  theme(axis.text.x = element_text(size = 8)) 
+
+DotPlot(seurat, features = kegg2, cols="RdBu", dot.scale = 9) + RotatedAxis() +
+  theme(axis.text.x = element_text(size = 8)) 
+
+```
+
+### Session Info
+```{r sessionInfo}
+print(sessionInfo())
+```

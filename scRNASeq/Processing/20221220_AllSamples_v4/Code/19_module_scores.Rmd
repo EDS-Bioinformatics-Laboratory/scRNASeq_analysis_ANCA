@@ -1,0 +1,339 @@
+---
+title: "Module scores for extracellular matrix regulators and bulk RNA-seq signatures"
+author: "Perry Moerland"
+date: "July, 2023"
+urlcolor: blue
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+
+```{r setup, include=FALSE,purl=FALSE}
+knitr::opts_chunk$set(echo=TRUE,comment="#",message=FALSE,warning=FALSE,
+                      fig.align='center',fig.width=7,fig.height=7,
+                      out.width="60%",fig.show="hold", fig.path = "19_module_scores/")
+```
+
+```{r init}
+# Set default for a good start 
+source("initAnalysis.r")
+init()
+
+# Create a directory to hold results and plots
+outDir <- "19_module_scores"
+dir.create(outDir)
+
+# Load packages
+library(ggplot2)
+library(multcomp)
+library(RColorBrewer)
+library(readxl)
+library(Seurat)
+```
+
+## ECM regulator score: kidney
+Similar to [Hoeft et al.](https://www.cell.com/cell-reports/fulltext/S2211-1247(23)00142-0) 
+(see also ProjectDocumentation/Literature/Hoeft-2023-Cell_Reports-Platelet-instructed SPP1(+)_macroph.pdf 
+in the FSS) we calculated an extracellular matrix (ECM) score for each cell.
+
+First import the single-cell data:
+```{r seurat}
+# Read the 10X data
+seurat <- readRDS("10_Reclustering_MP_and_MC/selectedClusters.subjectIntegrated.reclustered.rds")
+seurat
+```
+
+Then calculate the ECM regulator scores using a set of kidney-specific ECM 
+regulators:
+```{r ECM-regulators-kidney, dev=c('png','pdf','tiff')}
+# Import kidney-specific ECM regulators
+# List shared by Yosta on 26052023, source: http://matrisomedb.pepchem.org/
+# ECM Regulators  - Human - Kidney
+ecm.kidney <- read_excel("../Data/scRNASeq/Meta/230526 matrisome genesets.xlsx", 
+                         sheet = 1)
+length(ecm.kidney$Gene)
+length(unique(ecm.kidney$Gene))
+# So there are duplicates and these are
+ecm.kidney$Gene[duplicated(ecm.kidney$Gene)]
+
+# Overlap is limited
+length(intersect(rownames(seurat), ecm.kidney$Gene))
+# Therefore, switch to the SCT assay
+DefaultAssay(seurat) <- "SCT"
+length(intersect(rownames(seurat), ecm.kidney$Gene))
+# So there are 38-20=18 genes out of 38 that are not present in our data
+
+# Setting search = TRUE as argument doesn't find updated synonyms for the 18
+# genes missing 
+seurat <- AddModuleScore(seurat, features = list(ecm.kidney$Gene), 
+                         assay = "SCT", name = "ECMregulators.kidney", search = TRUE)
+round(range(seurat$ECMregulators.kidney1), 2)
+
+# Change the active.ident to the clustering used in the manuscript
+Idents(seurat) <- "integrated_snn_res.1"
+FeaturePlot(seurat, features = "ECMregulators.kidney1", label = TRUE, repel = TRUE, pt.size=1.5) +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+```
+
+The feature plot of the ECM regulator score on the UMAP embedding shows a clear
+spatial pattern. ECM regulator expression is indeed highest in cluster 8 (SPP1 LAMs), 
+followed by clusters and 11 (non-classical MDMs):
+
+```{r ECM-regulators-kidney-violin, dev=c('png','pdf','tiff')}
+# It is handier to plot the clusters in decreasing order of their mean score
+levels.ordered <- names(sort(tapply(seurat$ECMregulators.kidney1, seurat$integrated_snn_res.1, 
+                              mean), decreasing = TRUE))
+sort(tapply(seurat$ECMregulators.kidney1, seurat$integrated_snn_res.1, 
+            mean), decreasing = TRUE)
+seurat$integrated_snn_res.1 <- factor(x = seurat$integrated_snn_res.1, 
+                                      levels = levels.ordered)
+VlnPlot(seurat, group.by= "integrated_snn_res.1", features = "ECMregulators.kidney1",
+        pt.size = 0.1) + NoLegend() + xlab("Cluster") + ylab("Score")
+
+```
+
+ECM regulator scores of cluster 8 are significantly higher:
+```{r ECM-regulators-kidney-stats}
+cluster.ids <- seurat@meta.data$integrated_snn_res.1
+res.anova <- aov(seurat@meta.data$ECMregulators.kidney1~cluster.ids)
+summary(res.anova) 
+
+# Dunnett's test for a post-hoc comparison with cluster 8 as reference
+post_test <- glht(res.anova,
+  linfct = mcp(cluster.ids = "Dunnett")
+)
+summary(post_test)
+```
+
+```{r ECM-regulators-kidney-finalFigure}
+#get the colors
+library(scales)
+myCols <- hue_pal()(length(levels(seurat@meta.data$integrated_snn_res.1)))
+
+new.cluster.ids <- c("SPP1 LAMs", "Non-classical MDMs", "Stress repspons\nnon-classical MDMs", "Res-like C1q Mac", "Overlap Mac", "Classical MDMs", "cDCs", "cDCs & T cells", "cDCs", "T cells", "T cells", "T & NK cells","T cells")
+# seurat@meta.data$integrated_snn_res.1.named <- factor(seurat@meta.data$integrated_snn_res.1, levels=levels(seurat@meta.data$integrated_snn_res.1), labels=new.cluster.ids)
+
+p <- VlnPlot(seurat, sort = "decreasing", flip = TRUE, y.max = 0.575, group.by = "integrated_snn_res.1", features = "ECMregulators.kidney1", pt.size = 0.1,
+             cols = rev(myCols)) + 
+  NoLegend() + xlab("Cluster") + ylab("Score") 
+
+# Replace the x-axis labels, take care of reversing the labels (due to 'sort')
+p <- p + scale_x_discrete(labels=rev(new.cluster.ids))
+
+# 'flip' does not seem to work ...
+# VlnPlot -> Seurat:::ExIPlot
+# Seurat:::ExIPlot -> SingleExIPlot
+# and SingleExIPlot does not contain a 'flip' argument!
+
+# Just use what is offered by ggplot :-)
+p <- p + coord_flip() 
+
+# Add the significance, cluster 8 as the reference
+post_test.sum <- summary(post_test)
+
+# Not so nice, because it is now hard-coded, but needed something to provide
+# Yosta with a figure fast ... :-)
+# see https://stackoverflow.com/questions/17084566/put-stars-on-ggplot-barplots-and-boxplots-to-indicate-the-level-of-significanc
+library(superb)
+
+p <- p + showSignificance(c(1,1), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(2,2), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(3,3), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(4,4), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(5,5), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(6,6), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(7,7), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(8,8), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(9,9), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(10,10), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(11,11), 0.55, 0, "*", textParams = list(size = 4, family='mono'))
+p <- p + showSignificance(c(12,12), 0.55, 0, "***", textParams = list(size = 4, family='mono'))
+
+pdf(paste(outDir,paste0("ECM-regulators-kidney-violin-2.pdf"), sep="/"))
+  print(p)
+dev.off()
+
+ggsave(paste(outDir,paste0("ECM-regulators-kidney-violin-2.tiff"), sep="/"), p, scale=2, width=5, height=5, dpi=360,compression="lzw")
+
+p
+```
+
+### ECM regulator score: liver fibrosis
+
+For completeness' sake I also include the analysis with a small set of ECM
+regulators specific for liver fibrosis. This shows a similar pattern, although
+in the feature plot the spatial pattern seems less clear. 
+
+```{r ECM-regulators-liver-fibrosis}
+# ECM Regulators  - Human - Liver Fibrosis
+# Use the 'Liver Fibrosis' set? Only five genes ... so just do it manually
+ecm.liver.fibrosis <- c("TGM2","ADAMTSL4","SERPINH1","TIMP3","CTSB")
+seurat <- AddModuleScore(seurat, features = list(ecm.liver.fibrosis), 
+                         assay = "SCT", name = "ECMregulators.liver", search = TRUE)
+# TIMP3 is missing
+round(range(seurat$ECMregulators.liver1), 2)
+
+FeaturePlot(seurat, features = "ECMregulators.liver1", label = TRUE, repel = TRUE) +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+levels.ordered <- names(sort(tapply(seurat$ECMregulators.liver1, seurat$integrated_snn_res.1, 
+                                    mean), decreasing = TRUE))
+sort(tapply(seurat$ECMregulators.liver1, seurat$integrated_snn_res.1, 
+            mean), decreasing = TRUE)
+seurat$integrated_snn_res.1 <- factor(x = seurat$integrated_snn_res.1, 
+                                      levels = levels.ordered)
+VlnPlot(seurat, group.by= "integrated_snn_res.1", features = "ECMregulators.liver1", 
+        pt.size = 0.1) + NoLegend()
+
+cluster.ids <- seurat@meta.data$integrated_snn_res.1
+res.anova <- aov(seurat@meta.data$ECMregulators.liver1~cluster.ids)
+summary(res.anova) 
+
+# Dunnett's test for a post-hoc comparison with cluster 8 as reference
+post_test <- glht(res.anova,
+  linfct = mcp(cluster.ids = "Dunnett")
+)
+summary(post_test)
+```
+
+## Bulk RNA-seq signature scores
+
+In a similar vein we can also calculate scores for signatures from the bulk 
+RNA-seq experiment. Below this is done for the following comparisons:
+
+- Mono_Active_MPO_vs_Control
+- M0_Active_PR3_vs_Control
+- Mono_Remission_Pooled_vs_Mono_Control
+
+For each of these comparisons, we first selected significantly differentially
+upregulated (w.r.t. the control condition) genes.
+
+### Mono_Active_MPO_vs_Control
+
+```{r Mono-Active-MPO-vs-Control}
+# Import the differential expression results
+tt <- readRDS("../../../../RNASeq/Processing/20230124_AllSamples_BatchCorrected_v4/Results/Tables/tt_all.rds")
+indx <- tt$`adj.P.Val (Mono_Active_MPO_vs_Control)`< 0.05 & tt$`logFC (Mono_Active_MPO_vs_Control)` > 0
+sig <- tt[indx, "hgnc_symbol"]
+length(sig)
+length(intersect(rownames(seurat), sig))
+# So there are 635-465=170 genes out of 635 that are not present in our data
+
+seurat <- AddModuleScore(seurat, features = list(sig), 
+                         assay = "SCT", name = "Mono_Active_MPO_vs_Control")
+round(range(seurat$Mono_Active_MPO_vs_Control1), 2)
+
+FeaturePlot(seurat, features = "Mono_Active_MPO_vs_Control1", label = TRUE, 
+            repel = TRUE) +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+levels.ordered <- names(sort(tapply(seurat$Mono_Active_MPO_vs_Control1, seurat$integrated_snn_res.1, 
+                                    mean), decreasing = TRUE))
+sort(tapply(seurat$Mono_Active_MPO_vs_Control1, seurat$integrated_snn_res.1, 
+            mean), decreasing = TRUE)
+seurat$integrated_snn_res.1 <- factor(x = seurat$integrated_snn_res.1, 
+                                      levels = levels.ordered)
+VlnPlot(seurat, group.by= "integrated_snn_res.1", features = "Mono_Active_MPO_vs_Control1", 
+        pt.size = 0.1) + NoLegend()
+
+cluster.ids <- seurat@meta.data$integrated_snn_res.1
+res.anova <- aov(seurat@meta.data$Mono_Active_MPO_vs_Control1~cluster.ids)
+summary(res.anova) 
+
+# Dunnett's test for a post-hoc comparison with cluster 4 as reference
+post_test <- glht(res.anova,
+  linfct = mcp(cluster.ids = "Dunnett")
+)
+summary(post_test)
+```
+
+### M0_Active_PR3_vs_Control
+
+```{r M0-Active-PR3-vs-Control}
+indx <- tt$`adj.P.Val (M0_Active_PR3_vs_Control)`< 0.05 & tt$`logFC (M0_Active_PR3_vs_Control)` > 0
+sig <- tt[indx, "hgnc_symbol"]
+length(sig)
+
+length(intersect(rownames(seurat), sig))
+# So there are 137-70=67 genes out of 137 that are not present in our data
+
+seurat <- AddModuleScore(seurat, features = list(sig), 
+                         assay = "SCT", name = "M0_Active_PR3_vs_Control")
+round(range(seurat$M0_Active_PR3_vs_Control1), 2)
+
+FeaturePlot(seurat, features = "M0_Active_PR3_vs_Control1", label = TRUE, 
+            repel = TRUE) +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+levels.ordered <- names(sort(tapply(seurat$M0_Active_PR3_vs_Control1, seurat$integrated_snn_res.1, 
+                                    mean), decreasing = TRUE))
+sort(tapply(seurat$M0_Active_PR3_vs_Control1, seurat$integrated_snn_res.1, 
+            mean), decreasing = TRUE)
+seurat$integrated_snn_res.1 <- factor(x = seurat$integrated_snn_res.1, 
+                                      levels = levels.ordered)
+VlnPlot(seurat, group.by= "integrated_snn_res.1", features = "M0_Active_PR3_vs_Control1", 
+        pt.size = 0.1) + NoLegend()
+
+cluster.ids <- seurat@meta.data$integrated_snn_res.1
+res.anova <- aov(seurat@meta.data$M0_Active_PR3_vs_Control1~cluster.ids)
+summary(res.anova) 
+
+# Dunnett's test for a post-hoc comparison with cluster 8 as reference
+post_test <- glht(res.anova,
+  linfct = mcp(cluster.ids = "Dunnett")
+)
+summary(post_test)
+```
+
+### Mono_Remission_Pooled_vs_Mono_Control
+
+For the first two comparisons, genes with a Benjamini-Hochberg adjusted p-value
+< 0.05 were considered significant. However, for this comparison there are none.
+Therefore, a cut-off of 0.01 on the nominal p-values was used.
+
+```{r Mono-Remission-Pooled-vs-Mono-Control}
+# No genes with adj. p < 0.05
+indx <- tt$`adj.P.Val (Mono_Remission_Pooled_vs_Mono_Control)`< 0.05 & tt$`logFC (Mono_Remission_Pooled_vs_Mono_Control)` > 0
+sum(indx)
+
+# Therefore select genes with nominal p < 0.01
+indx <- tt$`P.Value (Mono_Remission_Pooled_vs_Mono_Control)`< 0.01 & tt$`logFC (Mono_Remission_Pooled_vs_Mono_Control)` > 0
+sig <- tt[indx, "hgnc_symbol"]
+length(sig)
+length(intersect(rownames(seurat), sig))
+# So there are 155-63=92 genes out of 155 that are not present in our data
+
+seurat <- AddModuleScore(seurat, features = list(sig), 
+                         assay = "SCT", name = "Mono_Remission_Pooled_vs_Mono_Control")
+round(range(seurat$Mono_Remission_Pooled_vs_Mono_Control1), 2)
+
+FeaturePlot(seurat, features = "Mono_Remission_Pooled_vs_Mono_Control1", label = TRUE, 
+            repel = TRUE) +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))
+levels.ordered <- names(sort(tapply(seurat$Mono_Remission_Pooled_vs_Mono_Control1, 
+                                    seurat$integrated_snn_res.1, mean), decreasing = TRUE))
+sort(tapply(seurat$Mono_Remission_Pooled_vs_Mono_Control1, seurat$integrated_snn_res.1, 
+            mean), decreasing = TRUE)
+seurat$integrated_snn_res.1 <- factor(x = seurat$integrated_snn_res.1, 
+                                      levels = levels.ordered)
+VlnPlot(seurat, group.by= "integrated_snn_res.1", features = "Mono_Remission_Pooled_vs_Mono_Control1", 
+        pt.size = 0.1) + NoLegend()
+
+cluster.ids <- seurat@meta.data$integrated_snn_res.1
+res.anova <- aov(seurat@meta.data$Mono_Remission_Pooled_vs_Mono_Control1~cluster.ids)
+summary(res.anova) 
+
+# Dunnett's test for a post-hoc comparison with cluster 1 as reference
+post_test <- glht(res.anova,
+  linfct = mcp(cluster.ids = "Dunnett")
+)
+summary(post_test)
+```
+Remarks:
+
+- At some point I should wrap most of this code into functions instead of copy-pasting.
+- Maybe we should include these signatures in the pseudo-bulk CAMERA analysis, so 
+that we can match the comparisons?
+- Since statistical tests are done at the cell-level, the analyses are highly
+powered. P-values can therefore become small even if the effects themselves are 
+small. Results should be taken with a pinch of salt.

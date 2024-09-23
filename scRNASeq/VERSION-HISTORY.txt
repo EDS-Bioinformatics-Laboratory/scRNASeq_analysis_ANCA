@@ -1,0 +1,19 @@
+VERSION 1. October 2020
+
+VERSION 2. 18 November 2020
+-Folder renamed to Directory in all files in structure
+-Folder Structure renamed to File System Structure (FSS)
+-Files renamed to HELP_FileNameConventions.md and HELP_FileSystemStructure.md. 
+-Documentation in HELP_FileSystemStructure.md extended and improved
+-In the Processing directory the file README.md is renamed to HELP.md. README.md, in Processing, now serves 
+ its usual purpose in GitHub.
+-Explanation in various files updated
+-ExternalData in main directory renamed to Data
+-PreProcessed renamed to Processed
+-In all Data directories the subfolders Raw, Processed, and Meta have been moved to the subfolder Dataset_1
+-MyDocumentation renamed to ProjectDocumentation and merged with BackgroundInformation
+-ProjectDocumentation renamed to Background Documentation
+-Directory LabJournal removed and replaced with file LabJournal.docx
+-DataTables renamed to Tables.
+-github.txt and .gitignore-template.txt is now included in FSS in Processing directory
+-Example FolderStructure renamed to ExampleFolderStructure
